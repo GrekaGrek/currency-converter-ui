@@ -8,109 +8,94 @@ interface Fee {
     fee: number;
 }
 
+const feeService = {
+    fetchFees: () => axios.get<Fee[]>('/admin/fees'),
+    addFee: (fee: Partial<Fee>) => axios.post('/admin/fees', fee),
+    updateFee: (id: number, fee: Partial<Fee>) => axios.put(`/admin/fees/${id}`, fee),
+    deleteFee: (id: number) => axios.delete(`/admin/fees/${id}`),
+};
+
 const AdminFeeManagement: React.FC = () => {
     const [fees, setFees] = useState<Fee[]>([]);
-    const [newFee, setNewFee] = useState<Partial<Fee>>({
+    const [currentFee, setCurrentFee] = useState<Partial<Fee>>({
         fromCurrency: '',
         toCurrency: '',
         fee: 0
     });
-    const [editingFee, setEditingFee] =
-        useState<Partial<Fee> | null>(null);
-    const [error, setError] = useState(null);
+    const [isEditing, setIsEditing] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        const fetchFees = () => {
-            axios.get<Fee[]>('/admin/fees')
-                .then(response => {
-                    setFees(response.data);
-                })
-                .catch(error => {
-                    console.error('Error fetching fees:', error);
-                });
-        };
-        fetchFees();
+        loadFees();
     }, []);
 
-    const addFee = async () => {
-        axios.post('/admin/fees', newFee)
-            .then(() => {
-                setNewFee({fromCurrency: '', toCurrency: '', fee: 0});
-                return axios.get<Fee[]>('/admin/fees');
-            })
-            .then(response => {
-                setFees(response.data);
-                setError(null);
-            })
-            .catch(error => {
-                setError(error.response?.data?.message || 'An unexpected error occurred');
-            });
+    const loadFees = () => {
+        feeService.fetchFees()
+            .then(response => setFees(response.data))
+            .catch(error => setError(`Error fetching fees: ${handleAxiosError(error)}`));
+    }
+
+    const resetForm = () => {
+        setCurrentFee({fromCurrency: '', toCurrency: '', fee: 0});
+        setIsEditing(false);
+        setError(null);
     };
 
-    const updateFee = () => {
-        if (editingFee && editingFee.id) {
-            axios.put(`/admin/fees/${editingFee.id}`, editingFee)
-                .then(() => {
-                    setEditingFee(null);
-                    setNewFee({fromCurrency: '', toCurrency: '', fee: 0});
-                    return axios.get<Fee[]>('/admin/fees');
-                })
-                .then(response => {
-                    setFees(response.data);
-                })
-                .catch(error => {
-                    console.error('Error updating fee:', error);
-                });
+    const handleAxiosError = (error: any): string => {
+        const response = error.response;
+        if (response?.data?.errors) {
+            return Object.entries(response.data.errors)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join(', ');
         }
+        return response?.data?.message || 'Unknown error';
     };
 
-    const deleteFee = async (id: number) => {
-        axios.delete(`/admin/fees/${id}`)
+    const handleAddOrUpdateFee = () => {
+        const action = isEditing && currentFee.id
+            ? feeService.updateFee(currentFee.id, currentFee)
+            : feeService.addFee(currentFee)
+
+        action
             .then(() => {
-                return axios.get<Fee[]>('/admin/fees');
+                resetForm();
+                loadFees()
             })
-            .then(response => {
-                setFees(response.data);
-            })
-            .catch(error => {
-                console.error('Error deleting fee:', error);
-            });
+            .catch(error => setError(`Error saving fee: ${handleAxiosError(error)}`));
+    };
+
+    const deleteFee = (id: number) => {
+        feeService.deleteFee(id)
+            .then(() => loadFees())
+            .catch(error => setError(`Error deleting fee: ${handleAxiosError(error)}`));
     };
 
     const handleFeeChange = (fee: Fee) => {
-        setEditingFee(fee);
-        setNewFee({
-            fromCurrency: fee.fromCurrency,
-            toCurrency: fee.toCurrency,
-            fee: fee.fee
-        });
+        setCurrentFee(fee);
+        setIsEditing(true);
     };
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>, field: keyof Fee) => {
         const value = field === 'fee' ? parseFloat(e.target.value) : e.target.value.toUpperCase();
-
-        if (editingFee) {
-            setEditingFee(prev => prev ? {...prev, [field]: value} : null);
-        } else {
-            setNewFee(prev => ({...prev, [field]: value}));
-        }
+        setCurrentFee(prev => ({...prev, [field]: value}));
     };
 
     return (
         <div style={{padding: '20px'}}>
             <h2 style={{marginBottom: '20px'}}>Manage Conversion Fees</h2>
+            {error && <div style={{color: 'red', marginBottom: '10px'}}>{error}</div>}
             <div style={{marginBottom: '20px'}}>
                 <input
                     type="text"
                     placeholder="From Currency"
-                    value={(editingFee ? editingFee.fromCurrency : newFee.fromCurrency) || ''}
+                    value={currentFee.fromCurrency || ''}
                     onChange={(e) => handleInputChange(e, 'fromCurrency')}
                     style={{marginRight: '10px', marginBottom: '10px'}}
                 />
                 <input
                     type="text"
                     placeholder="To Currency"
-                    value={(editingFee ? editingFee.toCurrency : newFee.toCurrency) || ''}
+                    value={currentFee.toCurrency || ''}
                     onChange={(e) => handleInputChange(e, 'toCurrency')}
                     style={{marginRight: '10px', marginBottom: '10px'}}
                 />
@@ -118,15 +103,17 @@ const AdminFeeManagement: React.FC = () => {
                     type="number"
                     step="0.1"
                     placeholder="Fee"
-                    value={(editingFee ? editingFee.fee : newFee.fee) || 0}
+                    value={currentFee.fee || 0}
                     onChange={(e) => handleInputChange(e, 'fee')}
                     style={{marginRight: '10px', marginBottom: '10px'}}
                 />
-                {editingFee ? (
-                    <button onClick={updateFee}>Update Fee</button>
-                ) : (
-                    <button onClick={addFee}>Add Fee</button>
-                )}
+                <button onClick={handleAddOrUpdateFee}>
+                    {isEditing ? 'Update Fee' : 'Add Fee'}
+                </button>
+                <button onClick={resetForm}
+                        style={{marginLeft: '10px'}}>
+                    Cancel
+                </button>
             </div>
             <ul>
                 {fees.map((fee) => (
